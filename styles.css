@@ -104,4 +104,19 @@ button:disabled {
     button {
         width: 100%;
     }
+}
+
+.camera-count {
+    text-align: center;
+    margin-bottom: 20px;
+    padding: 10px;
+    background-color: #f8f9fa;
+    border-radius: 4px;
+    font-size: 16px;
+    color: #333;
+}
+
+.camera-count.error {
+    background-color: #ffebee;
+    color: #c62828;
 } 
