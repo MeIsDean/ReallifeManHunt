@@ -134,14 +134,19 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            // Start both cameras independently
-            if (!stream1) {
-                stream1 = await startCamera(camera1, camera1Id, stream1);
-            }
+            // Start cameras sequentially
+            // Start camera 1 first
+            console.log('Starting camera 1...');
+            stream1 = await startCamera(camera1, camera1Id, stream1);
             
-            if (!stream2) {
-                stream2 = await startCamera(camera2, camera2Id, stream2);
-            }
+            // Small delay before starting camera 2
+            console.log('Camera 1 started, waiting before starting camera 2...');
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            // Start camera 2
+            console.log('Starting camera 2...');
+            stream2 = await startCamera(camera2, camera2Id, stream2);
+            console.log('Camera 2 started successfully');
             
             startButton.disabled = true;
             stopButton.disabled = false;
