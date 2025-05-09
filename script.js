@@ -10,10 +10,29 @@ document.addEventListener('DOMContentLoaded', () => {
     let stream1 = null;
     let stream2 = null;
     let availableCameras = [];
+    let isIOS = false;
+
+    // Check if device is iOS
+    function detectIOS() {
+        return [
+            'iPad',
+            'iPhone',
+            'iPod'
+        ].includes(navigator.platform) 
+        || (navigator.userAgent.includes("Mac") && "ontouchend" in document);
+    }
 
     // First request camera permissions to get labeled devices
     async function initCameras() {
         try {
+            // Detect if on iOS
+            isIOS = detectIOS();
+            if (isIOS) {
+                console.log('iOS device detected - only one camera can be active at a time');
+                cameraCountDisplay.textContent = 'iOS device: Only one camera can be used at a time';
+                cameraCountDisplay.classList.add('warning');
+            }
+
             // First try to get permission to access cameras
             const initialStream = await navigator.mediaDevices.getUserMedia({ video: true });
             
@@ -35,7 +54,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const videoDevices = devices.filter(device => device.kind === 'videoinput');
             
             console.log('Found cameras:', videoDevices);
-            cameraCountDisplay.textContent = `Available cameras: ${videoDevices.length}`;
+            
+            if (!isIOS) {
+                cameraCountDisplay.textContent = `Available cameras: ${videoDevices.length}`;
+            }
             
             availableCameras = videoDevices;
             
@@ -134,24 +156,37 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            // Start cameras sequentially
-            // Start camera 1 first
-            console.log('Starting camera 1...');
-            stream1 = await startCamera(camera1, camera1Id, stream1);
-            
-            // Small delay before starting camera 2
-            console.log('Camera 1 started, waiting before starting camera 2...');
-            await new Promise(resolve => setTimeout(resolve, 500));
-            
-            // Start camera 2
-            console.log('Starting camera 2...');
-            stream2 = await startCamera(camera2, camera2Id, stream2);
-            console.log('Camera 2 started successfully');
+            // On iOS, only start the first camera
+            if (isIOS) {
+                console.log('iOS device: Starting only camera 1');
+                stream1 = await startCamera(camera1, camera1Id, stream1);
+                
+                // Add switch button for iOS
+                if (!document.getElementById('iosSwitchButton')) {
+                    const switchBtn = document.createElement('button');
+                    switchBtn.id = 'iosSwitchButton';
+                    switchBtn.className = 'ios-switch-button';
+                    switchBtn.textContent = 'Switch to Camera 2';
+                    switchBtn.onclick = () => switchIOSCamera();
+                    document.querySelector('.controls').appendChild(switchBtn);
+                }
+            } else {
+                // On other platforms, start cameras sequentially
+                console.log('Starting camera 1...');
+                stream1 = await startCamera(camera1, camera1Id, stream1);
+                
+                console.log('Camera 1 started, waiting before starting camera 2...');
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                console.log('Starting camera 2...');
+                stream2 = await startCamera(camera2, camera2Id, stream2);
+                console.log('Camera 2 started successfully');
+            }
             
             startButton.disabled = true;
             stopButton.disabled = false;
             
-            console.log('Successfully started both cameras');
+            console.log('Successfully started cameras');
         } catch (error) {
             console.error('Error starting cameras:', error);
             if (error.name === 'NotAllowedError') {
@@ -165,6 +200,42 @@ document.addEventListener('DOMContentLoaded', () => {
             } else {
                 alert(`Error accessing cameras: ${error.message}`);
             }
+        }
+    }
+
+    // Function to switch between cameras on iOS
+    async function switchIOSCamera() {
+        const switchBtn = document.getElementById('iosSwitchButton');
+        
+        try {
+            // Check which camera is currently active
+            if (stream1) {
+                // Switch to camera 2
+                stream1.getTracks().forEach(track => track.stop());
+                stream1 = null;
+                camera1.srcObject = null;
+                
+                stream2 = await startCamera(camera2, camera2Select.value, stream2);
+                switchBtn.textContent = 'Switch to Camera 1';
+                console.log('Switched to camera 2');
+            } else if (stream2) {
+                // Switch to camera 1
+                stream2.getTracks().forEach(track => track.stop());
+                stream2 = null;
+                camera2.srcObject = null;
+                
+                stream1 = await startCamera(camera1, camera1Select.value, stream1);
+                switchBtn.textContent = 'Switch to Camera 2';
+                console.log('Switched to camera 1');
+            } else {
+                // No camera active, start camera 1
+                stream1 = await startCamera(camera1, camera1Select.value, stream1);
+                switchBtn.textContent = 'Switch to Camera 2';
+                console.log('Started camera 1');
+            }
+        } catch (error) {
+            console.error('Error switching iOS camera:', error);
+            alert('Error switching camera');
         }
     }
 
@@ -186,10 +257,22 @@ document.addEventListener('DOMContentLoaded', () => {
         startButton.disabled = false;
         stopButton.disabled = true;
         console.log('Cameras stopped');
+        
+        // Remove iOS switch button if it exists
+        const iosButton = document.getElementById('iosSwitchButton');
+        if (iosButton) {
+            iosButton.remove();
+        }
     }
 
     // Add event listeners for camera selection changes
     camera1Select.addEventListener('change', async () => {
+        if (isIOS) {
+            // On iOS we need to stop any active camera first
+            stopCameras();
+            return;
+        }
+        
         try {
             // Only update camera 1, leave camera 2 running
             stream1 = await startCamera(camera1, camera1Select.value, stream1);
@@ -201,6 +284,12 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     camera2Select.addEventListener('change', async () => {
+        if (isIOS) {
+            // On iOS we need to stop any active camera first
+            stopCameras();
+            return;
+        }
+        
         try {
             // Only update camera 2, leave camera 1 running
             stream2 = await startCamera(camera2, camera2Select.value, stream2);
