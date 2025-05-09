@@ -5,7 +5,7 @@ const nextConfig = {
     unoptimized: true,
   },
   // This is needed for GitHub Pages
-  basePath: '/ReallifeManHunt',
+  basePath: process.env.NODE_ENV === 'production' ? '/ReallifeManHunt' : '',
   // Ensure trailing slashes for GitHub Pages
   trailingSlash: true,
   // Disable server-side features since we're doing static export
