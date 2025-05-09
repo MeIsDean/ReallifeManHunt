@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dual Camera View</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Dual Camera View</h1>
+        <div class="camera-grid">
+            <div class="camera-container">
+                <video id="camera1" autoplay playsinline></video>
+                <div class="camera-label">Camera 1</div>
+            </div>
+            <div class="camera-container">
+                <video id="camera2" autoplay playsinline></video>
+                <div class="camera-label">Camera 2</div>
+            </div>
+        </div>
+        <div class="controls">
+            <button id="startButton">Start Cameras</button>
+            <button id="stopButton" disabled>Stop Cameras</button>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html> 
