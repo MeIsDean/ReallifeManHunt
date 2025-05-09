@@ -10,12 +10,33 @@ document.addEventListener('DOMContentLoaded', () => {
     let streams = [];
     let availableCameras = [];
 
+    // First request camera permissions to get labeled devices
+    async function initCameras() {
+        try {
+            // First try to get permission to access cameras
+            const initialStream = await navigator.mediaDevices.getUserMedia({ video: true });
+            
+            // Stop the initial stream
+            initialStream.getTracks().forEach(track => track.stop());
+            
+            // Now we can properly enumerate devices with labels
+            await getCameras();
+        } catch (error) {
+            console.error('Error initializing cameras:', error);
+            cameraCountDisplay.textContent = 'Error: Please grant camera permission';
+            cameraCountDisplay.classList.add('error');
+        }
+    }
+
     async function getCameras() {
         try {
             const devices = await navigator.mediaDevices.enumerateDevices();
             const videoDevices = devices.filter(device => device.kind === 'videoinput');
+            
             console.log('Found cameras:', videoDevices);
             cameraCountDisplay.textContent = `Available cameras: ${videoDevices.length}`;
+            
+            availableCameras = videoDevices;
             
             // Update camera selection dropdowns
             updateCameraSelects(videoDevices);
@@ -24,6 +45,7 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (error) {
             console.error('Error getting cameras:', error);
             cameraCountDisplay.textContent = 'Error detecting cameras';
+            cameraCountDisplay.classList.add('error');
             return [];
         }
     }
@@ -33,23 +55,43 @@ document.addEventListener('DOMContentLoaded', () => {
         while (camera1Select.options.length > 1) camera1Select.remove(1);
         while (camera2Select.options.length > 1) camera2Select.remove(1);
 
+        // If no cameras found or no permission
+        if (cameras.length === 0) {
+            camera1Select.innerHTML = '<option value="">No cameras available</option>';
+            camera2Select.innerHTML = '<option value="">No cameras available</option>';
+            return;
+        }
+
         // Add camera options
         cameras.forEach((camera, index) => {
-            const label = camera.label || `Camera ${index + 1}`;
+            // Use a clear device label or fallback to index
+            const label = camera.label || `Camera ${index + 1} (unlabeled)`;
             
             const option1 = new Option(label, camera.deviceId);
             const option2 = new Option(label, camera.deviceId);
             
             camera1Select.add(option1);
             camera2Select.add(option2);
+            
+            // Select first and second cameras by default
+            if (index === 0) {
+                camera1Select.value = camera.deviceId;
+            }
+            if (index === 1 && cameras.length > 1) {
+                camera2Select.value = camera.deviceId;
+            }
         });
+
+        // Log the dropdown contents for debugging
+        console.log('Camera 1 dropdown options:', camera1Select.options.length);
+        console.log('Camera 2 dropdown options:', camera2Select.options.length);
     }
 
     async function startCamera(videoElement, deviceId) {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({
                 video: { 
-                    deviceId: deviceId,
+                    deviceId: {exact: deviceId},
                     width: { ideal: 1280 },
                     height: { ideal: 720 }
                 }
@@ -64,20 +106,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function startCameras() {
         try {
-            // First, request camera permissions
-            await navigator.mediaDevices.getUserMedia({ video: true });
-            
-            // Then get the list of cameras
-            availableCameras = await getCameras();
-            
-            if (availableCameras.length < 2) {
-                alert(`Found ${availableCameras.length} camera(s). Please connect at least two cameras to use this application.`);
-                return;
-            }
-
-            // Stop any existing streams
-            stopCameras();
-
             // Get selected camera IDs
             const camera1Id = camera1Select.value;
             const camera2Id = camera2Select.value;
@@ -86,6 +114,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 alert('Please select cameras for both displays');
                 return;
             }
+
+            // Stop any existing streams
+            stopCameras();
 
             // Start both cameras
             const stream1 = await startCamera(camera1, camera1Id);
@@ -103,6 +134,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 alert('Camera access was denied. Please allow camera access and try again.');
             } else if (error.name === 'NotFoundError') {
                 alert('No cameras found. Please connect cameras and try again.');
+            } else if (error.name === 'OverconstrainedError') {
+                alert('The selected camera is no longer available. Please select another camera.');
+                // Refresh camera list if a device was disconnected
+                getCameras();
             } else {
                 alert(`Error accessing cameras: ${error.message}`);
             }
@@ -150,8 +185,14 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // Listen for device changes (new cameras connected/disconnected)
+    navigator.mediaDevices.addEventListener('devicechange', async () => {
+        console.log('Devices changed, updating camera list');
+        await getCameras();
+    });
+
     // Initial camera detection
-    getCameras();
+    initCameras();
 
     startButton.addEventListener('click', startCameras);
     stopButton.addEventListener('click', stopCameras);
