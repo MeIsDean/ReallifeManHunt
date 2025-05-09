@@ -119,4 +119,26 @@ button:disabled {
 .camera-count.error {
     background-color: #ffebee;
     color: #c62828;
+}
+
+.camera-select {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 10;
+    padding: 5px 10px;
+    border-radius: 4px;
+    border: 1px solid #ccc;
+    background-color: rgba(255, 255, 255, 0.9);
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.camera-select:hover {
+    background-color: white;
+}
+
+.camera-select:focus {
+    outline: none;
+    border-color: #4CAF50;
 } 
