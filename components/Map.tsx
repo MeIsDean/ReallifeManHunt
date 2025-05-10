@@ -86,7 +86,7 @@ export default function Map({ users, currentUserRole, currentUserId }: MapProps)
     // Always show the current user
     if (user.id === currentUserId) return true;
     
-    // Show other users with the same role
+    // Show other users with the same role (teammates)
     return user.role === currentUserRole;
   });
   
@@ -104,31 +104,43 @@ export default function Map({ users, currentUserRole, currentUserId }: MapProps)
       {/* Update map center when current position changes */}
       <LocationUpdater position={currentPosition} />
       
-      {visibleUsers.map((user) => (
-        <Marker
-          key={user.id}
-          position={user.position}
-          icon={
-            user.id === currentUserId
-              ? L.divIcon({
-                  className: 'my-div-icon',
-                  html: `<div class="h-6 w-6 rounded-full bg-green-500 border-2 border-white flex items-center justify-center text-white font-bold text-xs">ME</div>`,
-                  iconSize: [24, 24],
-                  iconAnchor: [12, 12],
-                })
-              : L.divIcon({
-                  className: 'user-div-icon',
-                  html: `<div class="h-6 w-6 rounded-full ${
-                    user.role === 'hunter' ? 'bg-blue-500' : 'bg-red-500'
-                  } border-2 border-white"></div>`,
-                  iconSize: [24, 24],
-                  iconAnchor: [12, 12],
-                })
-          }
-        >
-          <Popup>{user.username}</Popup>
-        </Marker>
-      ))}
+      {visibleUsers.map((user) => {
+        const isCurrentUser = user.id === currentUserId;
+        const roleColor = user.role === 'hunter' ? 'bg-blue-500' : 'bg-red-500';
+        const roleTextColor = user.role === 'hunter' ? 'text-blue-700' : 'text-red-700';
+        const roleBgColor = user.role === 'hunter' ? 'bg-blue-100' : 'bg-red-100';
+        
+        return (
+          <Marker
+            key={user.id}
+            position={user.position}
+            icon={
+              isCurrentUser
+                ? L.divIcon({
+                    className: 'my-div-icon',
+                    html: `<div class="h-6 w-6 rounded-full bg-green-500 border-2 border-white flex items-center justify-center text-white font-bold text-xs">ME</div>`,
+                    iconSize: [24, 24],
+                    iconAnchor: [12, 12],
+                  })
+                : L.divIcon({
+                    className: 'user-div-icon',
+                    html: `<div class="h-6 w-6 rounded-full ${roleColor} border-2 border-white flex items-center justify-center text-white font-bold text-xs">${user.username.charAt(0)}</div>`,
+                    iconSize: [24, 24],
+                    iconAnchor: [12, 12],
+                  })
+            }
+          >
+            <Popup>
+              <div className="font-semibold">
+                {isCurrentUser ? 'You' : user.username}
+                <span className={`ml-2 text-xs px-2 py-1 rounded-full ${roleBgColor} ${roleTextColor}`}>
+                  {user.role}
+                </span>
+              </div>
+            </Popup>
+          </Marker>
+        );
+      })}
     </MapContainer>
   );
 } 

@@ -4,19 +4,13 @@ import { useState, useEffect } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { v4 as uuidv4 } from 'uuid';
+import TeammatesList from '../../../components/TeammatesList';
+import socketService, { User } from '@/services/socket';
 
 // Import Map component dynamically to prevent SSR issues with Leaflet
 const MapWithNoSSR = dynamic(() => import('@/components/Map'), {
   ssr: false,
 });
-
-// In a real application, this would come from a backend
-type User = {
-  id: string;
-  username: string;
-  position: [number, number];
-  role: 'hunter' | 'target';
-};
 
 export default function GamePage() {
   const params = useParams();
@@ -29,116 +23,214 @@ export default function GamePage() {
   
   const [users, setUsers] = useState<User[]>([]);
   const [currentPosition, setCurrentPosition] = useState<[number, number]>([0, 0]);
-  const [userId] = useState(uuidv4());
-  const [isConnected, setIsConnected] = useState(true);
+  const [userId] = useState(() => searchParams.get('userId') || uuidv4());
+  const [isConnected, setIsConnected] = useState(false);
+  const [nearbyTeammates, setNearbyTeammates] = useState<User[]>([]);
+  const [showTeammatesList, setShowTeammatesList] = useState(false);
+  const [trackedTeammateId, setTrackedTeammateId] = useState<string | null>(null);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
 
-  // In a real application, this would use socket.io to connect to a backend
+  // Set up socket connection
   useEffect(() => {
-    // Simulate getting location and updating
-    if (navigator.geolocation) {
-      const watchId = navigator.geolocation.watchPosition(
-        (position) => {
-          const newPosition: [number, number] = [
-            position.coords.latitude,
-            position.coords.longitude,
-          ];
-          setCurrentPosition(newPosition);
+    try {
+      // Connect to socket server
+      const socket = socketService.connect();
+      
+      // Set up connection status handlers
+      const unsubscribeConnect = socketService.onConnect(() => {
+        setIsConnected(true);
+        setConnectionError(null);
+        
+        // Join game room
+        socketService.joinGame({
+          gameCode: code,
+          userId,
+          username,
+          role
+        });
+      });
+      
+      const unsubscribeDisconnect = socketService.onDisconnect(() => {
+        setIsConnected(false);
+      });
+      
+      // Set up user updates handlers
+      const unsubscribeUpdateUsers = socketService.onUpdateUsers((updatedUsers) => {
+        setUsers(prevUsers => {
+          // Preserve distance calculations if they exist
+          const userMap = new Map(prevUsers.map(user => [user.id, user]));
           
-          // Update the current user's position in the users array
-          setUsers((prevUsers) => {
-            const existingUserIndex = prevUsers.findIndex(user => user.id === userId);
-            
-            if (existingUserIndex >= 0) {
-              // Update existing user
-              const updatedUsers = [...prevUsers];
-              updatedUsers[existingUserIndex] = {
-                ...updatedUsers[existingUserIndex],
-                position: newPosition,
-              };
-              return updatedUsers;
-            } else {
-              // Add current user
-              return [
-                ...prevUsers,
-                {
-                  id: userId,
-                  username,
-                  position: newPosition,
-                  role,
-                },
-              ];
+          return updatedUsers.map(user => ({
+            ...user,
+            distance: userMap.get(user.id)?.distance
+          }));
+        });
+      });
+      
+      const unsubscribeUserJoined = socketService.onUserJoined((user) => {
+        setUsers(prevUsers => {
+          // Avoid duplicates
+          if (prevUsers.some(u => u.id === user.id)) {
+            return prevUsers;
+          }
+          return [...prevUsers, { ...user, position: [0, 0] }];
+        });
+      });
+      
+      const unsubscribeUserPositionUpdate = socketService.onUserPositionUpdate((update) => {
+        setUsers(prevUsers => {
+          return prevUsers.map(user => {
+            if (user.id === update.id) {
+              return { ...user, position: update.position };
             }
+            return user;
           });
-        },
-        (error) => {
-          console.error('Error getting location:', error);
-        },
-        { enableHighAccuracy: true }
+        });
+      });
+      
+      const unsubscribeUserLeft = socketService.onUserLeft((userId) => {
+        setUsers(prevUsers => prevUsers.filter(user => user.id !== userId));
+      });
+      
+      // Clean up on unmount
+      return () => {
+        unsubscribeConnect();
+        unsubscribeDisconnect();
+        unsubscribeUpdateUsers();
+        unsubscribeUserJoined();
+        unsubscribeUserPositionUpdate();
+        unsubscribeUserLeft();
+        socketService.disconnect();
+      };
+    } catch (error) {
+      console.error('Socket connection error:', error);
+      setConnectionError('Failed to connect to the game server. Please try again later.');
+      return () => {};
+    }
+  }, [code, userId, username, role]);
+
+  // Set up geolocation tracking
+  useEffect(() => {
+    if (!navigator.geolocation) {
+      setConnectionError('Geolocation is not supported by your browser. Please use a different device.');
+      return;
+    }
+    
+    // Add current user to users list
+    setUsers(prevUsers => {
+      if (!prevUsers.some(user => user.id === userId)) {
+        return [
+          ...prevUsers,
+          {
+            id: userId,
+            username,
+            position: [0, 0],
+            role,
+          }
+        ];
+      }
+      return prevUsers;
+    });
+    
+    // Watch position
+    const watchId = navigator.geolocation.watchPosition(
+      (position) => {
+        const newPosition: [number, number] = [
+          position.coords.latitude,
+          position.coords.longitude,
+        ];
+        
+        setCurrentPosition(newPosition);
+        
+        // Update users list with current position
+        setUsers(prevUsers => {
+          return prevUsers.map(user => {
+            if (user.id === userId) {
+              return { ...user, position: newPosition };
+            }
+            return user;
+          });
+        });
+        
+        // Send position update to server if connected
+        if (isConnected) {
+          socketService.updatePosition(newPosition);
+        }
+      },
+      (error) => {
+        console.error('Geolocation error:', error);
+        if (error.code === error.PERMISSION_DENIED) {
+          setConnectionError('Location permission denied. Please enable location services to play.');
+        }
+      },
+      { enableHighAccuracy: true, maximumAge: 10000, timeout: 10000 }
+    );
+    
+    return () => {
+      navigator.geolocation.clearWatch(watchId);
+    };
+  }, [userId, username, role, isConnected]);
+
+  // Calculate nearby teammates (within 500 meters) and update all teammate distances
+  useEffect(() => {
+    if (currentPosition[0] === 0 && currentPosition[1] === 0) return;
+    
+    const updatedUsers = users.map(user => {
+      if (user.id === userId) return user;
+      
+      const distance = calculateDistance(
+        currentPosition[0], 
+        currentPosition[1], 
+        user.position[0], 
+        user.position[1]
       );
       
-      // Simulate other users joining and moving (in a real app, this would come from sockets)
-      const simulateOtherUsers = () => {
-        // Only add simulated users if we're the host (for demo purposes)
-        if (!isHost) return;
-        
-        const targetUsers = Array.from({ length: 2 }, (_, i) => ({
-          id: `target-${i}`,
-          username: `Target ${i + 1}`,
-          position: [
-            currentPosition[0] + (Math.random() - 0.5) * 0.01,
-            currentPosition[1] + (Math.random() - 0.5) * 0.01,
-          ] as [number, number],
-          role: 'target' as const,
-        }));
-        
-        const hunterUsers = Array.from({ length: 2 }, (_, i) => ({
-          id: `hunter-${i}`,
-          username: `Hunter ${i + 1}`,
-          position: [
-            currentPosition[0] + (Math.random() - 0.5) * 0.01,
-            currentPosition[1] + (Math.random() - 0.5) * 0.01,
-          ] as [number, number],
-          role: 'hunter' as const,
-        }));
-        
-        setUsers((prevUsers) => {
-          // Filter out any existing simulated users and keep real users
-          const realUsers = prevUsers.filter(user => user.id === userId);
-          return [...realUsers, ...targetUsers, ...hunterUsers];
-        });
+      return {
+        ...user,
+        distance
       };
-      
-      // Only simulate after we have our own position
-      if (currentPosition[0] !== 0 && currentPosition[1] !== 0) {
-        simulateOtherUsers();
-        
-        // Move simulated users every few seconds
-        const moveInterval = setInterval(() => {
-          setUsers((prevUsers) => 
-            prevUsers.map(user => {
-              if (user.id === userId) return user; // Don't move the current user
-              
-              // Move other users randomly
-              return {
-                ...user,
-                position: [
-                  user.position[0] + (Math.random() - 0.5) * 0.001,
-                  user.position[1] + (Math.random() - 0.5) * 0.001,
-                ] as [number, number],
-              };
-            })
-          );
-        }, 3000);
-        
-        return () => {
-          navigator.geolocation.clearWatch(watchId);
-          clearInterval(moveInterval);
-        };
-      }
-      
-      return () => navigator.geolocation.clearWatch(watchId);
-    }
-  }, [userId, username, role, isHost, currentPosition]);
+    });
+    
+    setUsers(updatedUsers);
+    
+    const teammates = updatedUsers.filter(user => 
+      user.id !== userId && 
+      user.role === role
+    );
+    
+    // Calculate nearby teammates (within ~500 meters)
+    const nearby = teammates.filter(teammate => {
+      return (teammate.distance || Infinity) < 0.5; // 0.5 km = 500 meters
+    });
+    
+    setNearbyTeammates(nearby);
+  }, [users.map(u => u.position.join(',')).join(','), currentPosition, userId, role]);
+  
+  // Haversine formula to calculate distance in kilometers between two coordinates
+  function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number) {
+    const R = 6371; // Radius of the Earth in kilometers
+    const dLat = deg2rad(lat2 - lat1);
+    const dLon = deg2rad(lon2 - lon1);
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2); 
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
+    const distance = R * c; // Distance in kilometers
+    return distance;
+  }
+  
+  function deg2rad(deg: number) {
+    return deg * (Math.PI/180);
+  }
+  
+  // Track a teammate
+  const handleTrackTeammate = (teammateId: string) => {
+    setTrackedTeammateId(teammateId === trackedTeammateId ? null : teammateId);
+  };
+
+  // Get teammates (other users with the same role)
+  const teammates = users.filter(user => user.id !== userId && user.role === role);
 
   return (
     <div className="flex flex-col h-screen">
@@ -158,24 +250,85 @@ export default function GamePage() {
       </header>
       
       <div className="flex-1 relative">
-        {isConnected ? (
-          <MapWithNoSSR
-            users={users}
-            currentUserRole={role as 'hunter' | 'target'}
-            currentUserId={userId}
-          />
-        ) : (
-          <div className="flex items-center justify-center h-full">
-            <p>Connecting to server...</p>
+        {connectionError ? (
+          <div className="flex items-center justify-center h-full p-4">
+            <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded max-w-md text-center">
+              <p className="font-bold mb-2">Connection Error</p>
+              <p>{connectionError}</p>
+            </div>
           </div>
+        ) : (
+          <>
+            <MapWithNoSSR
+              users={users}
+              currentUserRole={role as 'hunter' | 'target'}
+              currentUserId={userId}
+            />
+            
+            {showTeammatesList && (
+              <div className="absolute right-4 top-4 w-64 bg-white rounded-lg shadow-lg border border-gray-200 z-[1000]">
+                <div className="flex justify-between items-center p-2 border-b">
+                  <h3 className="font-medium">Teammates</h3>
+                  <button 
+                    onClick={() => setShowTeammatesList(false)}
+                    className="text-gray-500 hover:text-gray-700"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <TeammatesList 
+                  teammates={teammates} 
+                  currentPosition={currentPosition}
+                  onTrackTeammate={handleTrackTeammate}
+                />
+              </div>
+            )}
+            
+            {!showTeammatesList && teammates.length > 0 && (
+              <button
+                onClick={() => setShowTeammatesList(true)}
+                className="absolute right-4 top-4 bg-white p-2 rounded-full shadow-lg z-[1000]"
+              >
+                <div className="flex items-center justify-center">
+                  <div className="h-6 w-6 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold">
+                    {teammates.length}
+                  </div>
+                </div>
+              </button>
+            )}
+            
+            {trackedTeammateId && (
+              <div className="absolute left-4 bottom-20 bg-yellow-100 p-2 rounded-lg shadow-md z-[1000] border border-yellow-200">
+                <div className="flex items-center">
+                  <p className="text-sm text-yellow-800 mr-2">
+                    Tracking: {users.find(u => u.id === trackedTeammateId)?.username}
+                  </p>
+                  <button 
+                    onClick={() => setTrackedTeammateId(null)}
+                    className="text-xs text-gray-600 hover:text-gray-800"
+                  >
+                    Stop
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
+      
+      {nearbyTeammates.length > 0 && (
+        <div className="bg-yellow-100 p-3 border-t border-yellow-200">
+          <p className="text-sm font-medium text-yellow-800">
+            {nearbyTeammates.length} teammate{nearbyTeammates.length > 1 ? 's' : ''} nearby (within 500m)!
+          </p>
+        </div>
+      )}
       
       <footer className="bg-gray-100 border-t p-4">
         <div className="flex justify-between items-center">
           <div>
             <p className="text-sm text-gray-600">
-              {users.filter(u => u.id !== userId && u.role === role).length} other {role}s online
+              {teammates.length} teammate{teammates.length !== 1 ? 's' : ''} online
             </p>
           </div>
           <div>
